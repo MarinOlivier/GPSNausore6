@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">GPSNausore6</string>
+    <string name="title_navigation">Navigation</string>
+    <string name="title_devices">Appareils</string>
+    <string name="title_settings">Paramêtres</string>
+
+    <!-- TODO: Remove or change this placeholder text -->
+    <string name="hello_blank_fragment">Hello blank fragment</string>
+</resources>
