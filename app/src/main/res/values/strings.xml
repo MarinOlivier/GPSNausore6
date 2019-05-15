@@ -4,6 +4,14 @@
     <string name="title_devices">Appareils</string>
     <string name="title_settings">Paramêtres</string>
 
+
+    <string name="title_connectedDevice">Appareil connecté :</string>
+    <string name="title_availableDevice">Appareil jumelés :</string>
+    <string name="button_disconnect">Déconnecter</string>
+    <string name="text_noConnectedDevice">Pas d\'appareil conntecté.</string>
+
+    <string name="title_test">Test</string>
+
     <!-- TODO: Remove or change this placeholder text -->
     <string name="hello_blank_fragment">Hello blank fragment</string>
 </resources>

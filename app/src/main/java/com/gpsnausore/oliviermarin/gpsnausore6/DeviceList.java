@@ -13,6 +13,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
+import android.widget.Button;
 import android.widget.ListView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -37,6 +38,8 @@ public class DeviceList extends Fragment implements AdapterView.OnItemClickListe
     private ListView listView;
     private View myView;
     private ArrayList list = new ArrayList();
+    private Button disconnectDeviceButton;
+    private TextView connectedDevice;
 
     public DeviceList() {
         // Required empty public constructor
@@ -69,6 +72,17 @@ public class DeviceList extends Fragment implements AdapterView.OnItemClickListe
         // Inflate the layout for this fragment
         super.onCreateView(inflater, container, savedInstanceState);
         View view = inflater.inflate(R.layout.fragment_device_list, container, false);
+
+        disconnectDeviceButton = view.findViewById(R.id.disconnectDeviceButton);
+        ((MainActivity)getActivity()).setConnectedDeviceText((TextView) view.findViewById(R.id.connectedDeviceText));
+        ((MainActivity)getActivity()).setDisconnectDeviceButton((Button) view.findViewById(R.id.disconnectDeviceButton));
+        disconnectDeviceButton.setEnabled(false);
+
+        if (((MainActivity)getActivity()).isConnected())
+            ((MainActivity)getActivity()).setConnectedDeviceView();
+
+
+        connectedDevice = view.findViewById(R.id.connectedDeviceText);
 
         listView = (ListView)view.findViewById(R.id.devicesList);
         ArrayAdapter<String> arrayAdapter = new ArrayAdapter<String>(getActivity(), android.R.layout.simple_list_item_1, list);
@@ -161,4 +175,7 @@ public class DeviceList extends Fragment implements AdapterView.OnItemClickListe
                 myBluetooth);
     }
 
+    public void setConnectedDeviceText(String connectedDeviceText) {
+        this.connectedDevice.setText(connectedDeviceText);
+    }
 }

@@ -3,6 +3,8 @@
     package="com.gpsnausore.oliviermarin.gpsnausore6">
 
     <uses-permission android:name="android.permission.BLUETOOTH" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
 
     <application
         android:allowBackup="true"

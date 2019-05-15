@@ -13,6 +13,9 @@ import android.support.v7.app.AppCompatActivity;
 import android.support.annotation.NonNull;
 import android.util.Log;
 import android.view.MenuItem;
+import android.view.View;
+import android.widget.Button;
+import android.widget.EditText;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -25,12 +28,18 @@ import java.util.Set;
 import java.util.UUID;
 import android.os.Message;
 
-public class MainActivity extends AppCompatActivity implements DeviceList.OnFragmentInteractionListener, NavigationMap.OnFragmentInteractionListener, Settings.OnFragmentInteractionListener {
+public class MainActivity extends AppCompatActivity implements DeviceList.OnFragmentInteractionListener,
+        NavigationMap.OnFragmentInteractionListener, Settings.OnFragmentInteractionListener {
 
     private Fragment fragment;
-
     private static final String TAG = "MY_APP_DEBUG_TAG";
     private Handler handler = new Handler(); // handler that gets info from Bluetooth service
+    private ConnectedThread mainThread;
+    private TextView connectedDeviceText;
+    private Button disconnectDeviceButton;
+    private boolean connected = false;
+    private String address;
+    private String name;
 
     private BottomNavigationView.OnNavigationItemSelectedListener mOnNavigationItemSelectedListener
             = new BottomNavigationView.OnNavigationItemSelectedListener() {
@@ -77,8 +86,8 @@ public class MainActivity extends AppCompatActivity implements DeviceList.OnFrag
 
     public void startConnection(final String deviceName, String deviceMac, BluetoothAdapter myBluetooth){
         // Get the device MAC address, which is the last 17 chars in the View
-        final String address = deviceMac;
-        final String name = deviceName;
+        address = deviceMac;
+        name = deviceName;
         final BluetoothAdapter mBluetooth = myBluetooth;
 
 
@@ -91,9 +100,36 @@ public class MainActivity extends AppCompatActivity implements DeviceList.OnFrag
             Toast.makeText(getBaseContext(), "Socket creation failed", Toast.LENGTH_SHORT).show();
         }
 
-        ConnectedThread mainThread = new ConnectedThread(mBTSocket);
 
-        mainThread.write("Coucou".getBytes());
+        try {
+            connected = true;
+            mainThread = new ConnectedThread(mBTSocket);
+
+
+        } catch (IOException e) {
+            e.printStackTrace();
+            Toast.makeText(getBaseContext(), "Impossible de se connecter à "+deviceName, Toast.LENGTH_SHORT).show();
+            connected = false;
+        }
+
+        if (connected) {
+            setConnectedDeviceView();
+        }
+
+        //mainThread.write("Coucou".getBytes());
+
+    }
+
+    protected void setConnectedDeviceView(){
+        connectedDeviceText.setText(name + "\n" + address);
+        disconnectDeviceButton.setEnabled(true);
+        disconnectDeviceButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                mainThread.cancel();
+            }
+
+        });
 
     }
 
@@ -128,13 +164,13 @@ public class MainActivity extends AppCompatActivity implements DeviceList.OnFrag
         // ... (Add other message types here as needed.)
     }
 
-    private class ConnectedThread extends Thread {
+    protected class ConnectedThread extends Thread {
         private final BluetoothSocket mmSocket;
         private final InputStream mmInStream;
         private final OutputStream mmOutStream;
         private byte[] mmBuffer; // mmBuffer store for the stream
 
-        public ConnectedThread(BluetoothSocket socket) {
+        public ConnectedThread(BluetoothSocket socket) throws IOException {
             mmSocket = socket;
             InputStream tmpIn = null;
             OutputStream tmpOut = null;
@@ -142,6 +178,7 @@ public class MainActivity extends AppCompatActivity implements DeviceList.OnFrag
                 socket.connect();
             } catch (IOException e) {
                 e.printStackTrace();
+                throw e;
             }
 
             // Get the input and output streams; using temp objects because
@@ -150,11 +187,13 @@ public class MainActivity extends AppCompatActivity implements DeviceList.OnFrag
                 tmpIn = socket.getInputStream();
             } catch (IOException e) {
                 Log.e(TAG, "Error occurred when creating input stream", e);
+                throw e;
             }
             try {
                 tmpOut = socket.getOutputStream();
             } catch (IOException e) {
                 Log.e(TAG, "Error occurred when creating output stream", e);
+                throw e;
             }
 
             mmInStream = tmpIn;
@@ -209,9 +248,30 @@ public class MainActivity extends AppCompatActivity implements DeviceList.OnFrag
         public void cancel() {
             try {
                 mmSocket.close();
+                connectedDeviceText.setText(R.string.text_noConnectedDevice);
+                disconnectDeviceButton.setEnabled(false);
+                disconnectDeviceButton.setOnClickListener(null);
             } catch (IOException e) {
                 Log.e(TAG, "Could not close the connect socket", e);
             }
         }
+    }
+
+
+    public ConnectedThread getMainThread() {
+        return mainThread;
+    }
+
+
+    public boolean isConnected() {
+        return connected;
+    }
+
+    public void setConnectedDeviceText(TextView connectedDeviceText) {
+        this.connectedDeviceText = connectedDeviceText;
+    }
+
+    public void setDisconnectDeviceButton(Button disconnectDeviceButton) {
+        this.disconnectDeviceButton = disconnectDeviceButton;
     }
 }
