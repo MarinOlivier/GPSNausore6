@@ -1,13 +1,16 @@
 package com.gpsnausore.oliviermarin.gpsnausore6;
 
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
+import android.location.Location;
 import android.net.Uri;
 import android.os.Bundle;
 import android.support.annotation.NonNull;
+import android.support.design.widget.FloatingActionButton;
 import android.support.v4.app.Fragment;
 import android.util.Log;
 import android.view.LayoutInflater;
@@ -16,6 +19,8 @@ import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.Toast;
 
+import com.mapbox.android.core.location.LocationEngine;
+import com.mapbox.android.core.location.LocationEngineProvider;
 import com.mapbox.android.core.permissions.PermissionsListener;
 import com.mapbox.android.core.permissions.PermissionsManager;
 import com.mapbox.api.directions.v5.models.DirectionsResponse;
@@ -38,14 +43,22 @@ import com.mapbox.mapboxsdk.plugins.places.autocomplete.PlaceAutocomplete;
 import com.mapbox.mapboxsdk.plugins.places.autocomplete.model.PlaceOptions;
 import com.mapbox.mapboxsdk.style.layers.SymbolLayer;
 import com.mapbox.mapboxsdk.style.sources.GeoJsonSource;
+import com.mapbox.services.android.navigation.ui.v5.camera.NavigationCamera;
 import com.mapbox.services.android.navigation.ui.v5.route.NavigationMapRoute;
+import com.mapbox.services.android.navigation.v5.milestone.Milestone;
+import com.mapbox.services.android.navigation.v5.milestone.MilestoneEventListener;
+import com.mapbox.services.android.navigation.v5.navigation.MapboxNavigation;
 import com.mapbox.services.android.navigation.v5.navigation.NavigationRoute;
+import com.mapbox.services.android.navigation.v5.routeprogress.ProgressChangeListener;
+import com.mapbox.services.android.navigation.v5.routeprogress.RouteProgress;
 
 import java.util.List;
+import java.util.Objects;
 
 import retrofit2.Call;
 import retrofit2.Callback;
 import retrofit2.Response;
+import timber.log.Timber;
 
 import static com.mapbox.mapboxsdk.style.layers.PropertyFactory.iconAllowOverlap;
 import static com.mapbox.mapboxsdk.style.layers.PropertyFactory.iconIgnorePlacement;
@@ -60,7 +73,7 @@ import static com.mapbox.mapboxsdk.style.layers.PropertyFactory.iconImage;
  * Use the {@link NavigationMap#newInstance} factory method to
  * create an instance of this fragment.
  */
-public class NavigationMap extends Fragment implements OnMapReadyCallback, MapboxMap.OnMapClickListener, PermissionsListener {
+public class NavigationMap extends Fragment implements OnMapReadyCallback, PermissionsListener {
 
     private OnFragmentInteractionListener mListener;
 
@@ -75,11 +88,21 @@ public class NavigationMap extends Fragment implements OnMapReadyCallback, Mapbo
     private DirectionsRoute currentRoute;
     private static final String TAG = "DirectionsActivity";
     private NavigationMapRoute navigationMapRoute;
+    private DirectionsRoute directionsRoute;
     // variables needed to initialize navigation
     private Button button;
 
     private static final int REQUEST_CODE_AUTOCOMPLETE = 1;
     private String geojsonSourceLayerId = "geojsonSourceLayerId";
+
+    private Point destinationPoint;
+    private Point originPoint;
+
+    private FloatingActionButton fab_nav_start;
+    private FloatingActionButton fab_location_search;
+
+    private MapboxNavigation navigation;
+    private NavigationCamera camera;
 
     public NavigationMap() {
         // Required empty public constructor
@@ -105,23 +128,33 @@ public class NavigationMap extends Fragment implements OnMapReadyCallback, Mapbo
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        if ((savedInstanceState != null) && (savedInstanceState.getSerializable("navigationMapRoute") != null)) {
+            navigationMapRoute=(NavigationMapRoute)savedInstanceState.getSerializable("navigationMapRoute");
+        }
+
     }
 
+    @SuppressLint("RestrictedApi")
     @Override
     public View onCreateView(LayoutInflater inflater, ViewGroup container,
                              Bundle savedInstanceState) {
         // Inflate the layout for this fragment
 
-        Mapbox.getInstance(getContext(), getString(R.string.access_token));
+        Mapbox.getInstance(Objects.requireNonNull(getContext()), getString(R.string.access_token));
+
 
         super.onCreateView(inflater, container, savedInstanceState);
         final View view = inflater.inflate(R.layout.fragment_navigation_map, container, false);
+
+
 
         //setContentView(R.layout.activity_main);
         mapView = view.findViewById(R.id.mapView);
         mapView.onCreate(savedInstanceState);
         mapView.getMapAsync(this);
-        button = view.findViewById(R.id.startButton);
+
+        fab_nav_start = view.findViewById(R.id.fab_nav_start);
+        fab_nav_start.setVisibility(View.INVISIBLE);
 
 
         myView = view;
@@ -160,14 +193,19 @@ public class NavigationMap extends Fragment implements OnMapReadyCallback, Mapbo
             public void onStyleLoaded(@NonNull Style style) {
 
                 initSearchFab();
-
                 setUpSource(style);
-
                 enableLocationComponent(style);
-
                 addDestinationIconSymbolLayer(style);
 
-                mapboxMap.addOnMapClickListener(NavigationMap.this);
+                if (locationComponent.getLastKnownLocation() != null) {
+                    LatLng pos = null;
+                    pos = new LatLng(locationComponent.getLastKnownLocation().getLatitude(), locationComponent.getLastKnownLocation().getLongitude());
+
+                    mapboxMap.setCameraPosition(new CameraPosition.Builder()
+                            .target(pos)
+                            .zoom(15)
+                            .build());
+                }
             }
         });
     }
@@ -204,29 +242,16 @@ public class NavigationMap extends Fragment implements OnMapReadyCallback, Mapbo
         loadedMapStyle.addLayer(destinationSymbolLayer);
     }
 
-    @SuppressWarnings( {"MissingPermission"})
-    @Override
-    public boolean onMapClick(@NonNull LatLng point) {
-
-        Point destinationPoint = Point.fromLngLat(point.getLongitude(), point.getLatitude());
-        Point originPoint = Point.fromLngLat(locationComponent.getLastKnownLocation().getLongitude(),
-                locationComponent.getLastKnownLocation().getLatitude());
-
-        GeoJsonSource source = mapboxMap.getStyle().getSourceAs("destination-source-id");
-        if (source != null) {
-            source.setGeoJson(Feature.fromGeometry(destinationPoint));
-        }
-
-        getRoute(originPoint, destinationPoint);
-        button.setEnabled(true);
-        button.setBackgroundResource(R.color.mapbox_blue);
-        return true;
-    }
-
+    @SuppressLint("RestrictedApi")
     private void initSearchFab() {
-        myView.findViewById(R.id.fab_location_search).setOnClickListener(new View.OnClickListener() {
+
+        fab_location_search = myView.findViewById(R.id.fab_location_search);
+        fab_location_search.setVisibility(View.VISIBLE);
+
+        fab_location_search.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
+                assert Mapbox.getAccessToken() != null;
                 Intent intent = new PlaceAutocomplete.IntentBuilder()
                         .accessToken(Mapbox.getAccessToken())
                         .placeOptions(PlaceOptions.builder()
@@ -237,6 +262,55 @@ public class NavigationMap extends Fragment implements OnMapReadyCallback, Mapbo
                 startActivityForResult(intent, REQUEST_CODE_AUTOCOMPLETE);
             }
         });
+    }
+
+    @SuppressLint("RestrictedApi")
+    private void initNavFab(){
+        fab_location_search.setVisibility(View.INVISIBLE);
+        fab_nav_start.setVisibility(View.VISIBLE);
+        fab_nav_start.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                DirectionsRoute route = directionsRoute;
+
+                boolean simulateRoute = true;
+
+                /*// Create a NavigationLauncherOptions object to package everything together
+                NavigationLauncherOptions options = NavigationLauncherOptions.builder()
+                        .directionsRoute(route)
+                        .shouldSimulateRoute(simulateRoute)
+                        .build();
+
+                // Call this method with Context from within an Activity
+                NavigationLauncher.startNavigation(Objects.requireNonNull(getActivity()), options);*/
+                startNavigation(directionsRoute);
+            }
+        });
+    }
+
+    private void startNavigation(DirectionsRoute route) {
+        if (locationComponent != null) {
+            navigation = new MapboxNavigation(getContext(), getString(R.string.access_token));
+            navigation.addProgressChangeListener(new ProgressChangeListener() {
+                @Override
+                public void onProgressChange(Location location, RouteProgress routeProgress) {
+                    //Toast.makeText(MainActivity.this, "progress: " + routeProgress.distanceTraveled(), Toast.LENGTH_SHORT).show();
+                }
+            });
+            navigation.addMilestoneEventListener(new MilestoneEventListener() {
+                @Override
+                public void onMilestoneEvent(RouteProgress routeProgress, String instruction, Milestone milestone) {
+                    Toast.makeText(getActivity(), "instruction: " + instruction, Toast.LENGTH_SHORT).show();
+                }
+            });
+            LocationEngine locationEngine = LocationEngineProvider.getBestLocationEngine(getContext());
+            navigation.setLocationEngine(locationEngine);
+            navigationMapRoute.addProgressChangeListener(navigation);
+            navigationMapRoute.addRoute(route);
+            navigation.startNavigation(route);
+            camera = new NavigationCamera(mapboxMap, navigation, locationComponent);
+            camera.start(route);
+        }
     }
 
     @Override
@@ -266,16 +340,33 @@ public class NavigationMap extends Fragment implements OnMapReadyCallback, Mapbo
                                             ((Point) selectedCarmenFeature.geometry()).longitude()))
                                     .zoom(14)
                                     .build()), 4000);
+
+                    destinationPoint = Point.fromLngLat(((Point) selectedCarmenFeature.geometry()).longitude(), ((Point) selectedCarmenFeature.geometry()).latitude());
+                    originPoint = Point.fromLngLat(locationComponent.getLastKnownLocation().getLongitude(),
+                            locationComponent.getLastKnownLocation().getLatitude());
+
+                    if (source != null) {
+                        source.setGeoJson(Feature.fromGeometry(destinationPoint));
+                    }
+
+                    navigationMapRoute = getRoute(originPoint, destinationPoint);
+                    initNavFab();
                 }
             }
         }
     }
 
+
     private void setUpSource(@NonNull Style loadedMapStyle) {
         loadedMapStyle.addSource(new GeoJsonSource(geojsonSourceLayerId));
     }
 
-    private void getRoute(Point origin, Point destination) {
+    private NavigationMapRoute getRoute(Point origin, Point destination) {
+        //@TODO : Enelver ca, c'est pour test TGV
+        LatLng latlng = new LatLng(43.253423, 5.399954);
+        origin = Point.fromLngLat(latlng.getLongitude(), latlng.getLatitude());
+
+
         NavigationRoute.builder(getContext())
                 .accessToken(Mapbox.getAccessToken())
                 .origin(origin)
@@ -303,6 +394,8 @@ public class NavigationMap extends Fragment implements OnMapReadyCallback, Mapbo
                             navigationMapRoute = new NavigationMapRoute(null, mapView, mapboxMap, R.style.NavigationMapRoute);
                         }
                         navigationMapRoute.addRoute(currentRoute);
+
+                        directionsRoute = currentRoute;
                     }
 
                     @Override
@@ -310,6 +403,7 @@ public class NavigationMap extends Fragment implements OnMapReadyCallback, Mapbo
                         Log.e(TAG, "Error: " + throwable.getMessage());
                     }
                 });
+        return navigationMapRoute;
     }
 
     @SuppressWarnings( {"MissingPermission"})
@@ -359,12 +453,14 @@ public class NavigationMap extends Fragment implements OnMapReadyCallback, Mapbo
     public void onResume() {
         super.onResume();
         mapView.onResume();
+        Timber.tag(TAG).w("On resume");
     }
 
     @Override
     public void onPause() {
         super.onPause();
         mapView.onPause();
+        Timber.tag(TAG).w("On pause");
     }
 
     @Override
@@ -383,6 +479,7 @@ public class NavigationMap extends Fragment implements OnMapReadyCallback, Mapbo
     public void onDestroy() {
         super.onDestroy();
         mapView.onDestroy();
+        navigation.stopNavigation();
     }
 
     @Override
