@@ -7,6 +7,7 @@ import android.content.Intent;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.location.Location;
+import android.location.LocationManager;
 import android.net.Uri;
 import android.os.Bundle;
 import android.support.annotation.NonNull;
@@ -34,6 +35,7 @@ import com.mapbox.mapboxsdk.camera.CameraPosition;
 import com.mapbox.mapboxsdk.camera.CameraUpdateFactory;
 import com.mapbox.mapboxsdk.geometry.LatLng;
 import com.mapbox.mapboxsdk.location.LocationComponent;
+import com.mapbox.mapboxsdk.location.LocationComponentActivationOptions;
 import com.mapbox.mapboxsdk.location.modes.CameraMode;
 import com.mapbox.mapboxsdk.maps.MapView;
 import com.mapbox.mapboxsdk.maps.MapboxMap;
@@ -49,6 +51,7 @@ import com.mapbox.services.android.navigation.v5.milestone.Milestone;
 import com.mapbox.services.android.navigation.v5.milestone.MilestoneEventListener;
 import com.mapbox.services.android.navigation.v5.navigation.MapboxNavigation;
 import com.mapbox.services.android.navigation.v5.navigation.NavigationRoute;
+import com.mapbox.services.android.navigation.v5.offroute.OffRouteListener;
 import com.mapbox.services.android.navigation.v5.routeprogress.ProgressChangeListener;
 import com.mapbox.services.android.navigation.v5.routeprogress.RouteProgress;
 
@@ -60,6 +63,8 @@ import retrofit2.Callback;
 import retrofit2.Response;
 import timber.log.Timber;
 
+import static android.content.Context.LOCATION_SERVICE;
+import static com.mapbox.mapboxsdk.Mapbox.getApplicationContext;
 import static com.mapbox.mapboxsdk.style.layers.PropertyFactory.iconAllowOverlap;
 import static com.mapbox.mapboxsdk.style.layers.PropertyFactory.iconIgnorePlacement;
 import static com.mapbox.mapboxsdk.style.layers.PropertyFactory.iconImage;
@@ -103,6 +108,8 @@ public class NavigationMap extends Fragment implements OnMapReadyCallback, Permi
 
     private MapboxNavigation navigation;
     private NavigationCamera camera;
+
+    private LocationManager mLocationManager;
 
     public NavigationMap() {
         // Required empty public constructor
@@ -185,26 +192,45 @@ public class NavigationMap extends Fragment implements OnMapReadyCallback, Permi
         mListener = null;
     }
 
+    @SuppressLint("MissingPermission")
+    private Location getLastKnownLocation() {
+        mLocationManager = (LocationManager)getContext().getSystemService(LOCATION_SERVICE);
+        List<String> providers = mLocationManager.getProviders(true);
+        Location bestLocation = null;
+        for (String provider : providers) {
+             Location l = mLocationManager.getLastKnownLocation(provider);
+            if (l == null) {
+                continue;
+            }
+            if (bestLocation == null || l.getAccuracy() < bestLocation.getAccuracy()) {
+                // Found best last known location: %s", l);
+                bestLocation = l;
+            }
+        }
+        return bestLocation;
+    }
+
     @Override
     public void onMapReady(@NonNull final MapboxMap mapboxMap) {
         this.mapboxMap = mapboxMap;
         mapboxMap.setStyle(getString(R.string.navigation_guidance_day), new Style.OnStyleLoaded() {
             @Override
             public void onStyleLoaded(@NonNull Style style) {
-
+                Location lastKnowLocation = getLastKnownLocation();
                 initSearchFab();
                 setUpSource(style);
                 enableLocationComponent(style);
                 addDestinationIconSymbolLayer(style);
-
-                if (locationComponent.getLastKnownLocation() != null) {
+                Toast.makeText(getActivity(), "Steady ?", Toast.LENGTH_SHORT).show();
+                if (lastKnowLocation != null) {
                     LatLng pos = null;
-                    pos = new LatLng(locationComponent.getLastKnownLocation().getLatitude(), locationComponent.getLastKnownLocation().getLongitude());
+                    pos = new LatLng(lastKnowLocation.getLatitude(),lastKnowLocation.getLongitude());
 
                     mapboxMap.setCameraPosition(new CameraPosition.Builder()
                             .target(pos)
                             .zoom(15)
                             .build());
+                    Toast.makeText(getActivity(), "GO!", Toast.LENGTH_SHORT).show();
                 }
             }
         });
@@ -271,18 +297,6 @@ public class NavigationMap extends Fragment implements OnMapReadyCallback, Permi
         fab_nav_start.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                DirectionsRoute route = directionsRoute;
-
-                boolean simulateRoute = true;
-
-                /*// Create a NavigationLauncherOptions object to package everything together
-                NavigationLauncherOptions options = NavigationLauncherOptions.builder()
-                        .directionsRoute(route)
-                        .shouldSimulateRoute(simulateRoute)
-                        .build();
-
-                // Call this method with Context from within an Activity
-                NavigationLauncher.startNavigation(Objects.requireNonNull(getActivity()), options);*/
                 startNavigation(directionsRoute);
             }
         });
@@ -295,22 +309,43 @@ public class NavigationMap extends Fragment implements OnMapReadyCallback, Permi
                 @Override
                 public void onProgressChange(Location location, RouteProgress routeProgress) {
                     //Toast.makeText(MainActivity.this, "progress: " + routeProgress.distanceTraveled(), Toast.LENGTH_SHORT).show();
+
                 }
             });
             navigation.addMilestoneEventListener(new MilestoneEventListener() {
                 @Override
                 public void onMilestoneEvent(RouteProgress routeProgress, String instruction, Milestone milestone) {
-                    Toast.makeText(getActivity(), "instruction: " + instruction, Toast.LENGTH_SHORT).show();
+                    if (routeProgress.bannerInstruction() != null) {
+                        Log.d("MY_DEBUG", "instruction: " +
+                                routeProgress.bannerInstruction().getPrimary().getType() + " "
+                                + routeProgress.bannerInstruction().getPrimary().getModifier() + " "
+                                + routeProgress.bannerInstruction().getPrimary().getText() + " "
+                                + routeProgress.bannerInstruction().getRemainingStepDistance());
+                    }
                 }
             });
             LocationEngine locationEngine = LocationEngineProvider.getBestLocationEngine(getContext());
             navigation.setLocationEngine(locationEngine);
             navigationMapRoute.addProgressChangeListener(navigation);
             navigationMapRoute.addRoute(route);
+            navigation.addOffRouteListener(new OffRouteListener() {
+                @Override
+                public void userOffRoute(Location location) {
+                    Log.d("MY_DEBUG", "Wrong route !");
+                    navigation.stopNavigation();
+                    restartNav();
+                }
+            });
             navigation.startNavigation(route);
             camera = new NavigationCamera(mapboxMap, navigation, locationComponent);
             camera.start(route);
         }
+    }
+
+    private void restartNav() {
+        originPoint =  Point.fromLngLat(getLastKnownLocation().getLongitude(), getLastKnownLocation().getLatitude());
+        navigationMapRoute = getRoute(originPoint, destinationPoint);
+        startNavigation(directionsRoute);
     }
 
     @Override
@@ -363,9 +398,11 @@ public class NavigationMap extends Fragment implements OnMapReadyCallback, Permi
 
     private NavigationMapRoute getRoute(Point origin, Point destination) {
         //@TODO : Enelver ca, c'est pour test TGV
-        LatLng latlng = new LatLng(43.253423, 5.399954);
-        origin = Point.fromLngLat(latlng.getLongitude(), latlng.getLatitude());
+        //LatLng latlng = new LatLng(43.253423, 5.399954);
+        //origin = Point.fromLngLat(latlng.getLongitude(), latlng.getLatitude());
 
+
+        origin = Point.fromLngLat(getLastKnownLocation().getLongitude(), getLastKnownLocation().getLatitude());
 
         NavigationRoute.builder(getContext())
                 .accessToken(Mapbox.getAccessToken())
@@ -375,7 +412,7 @@ public class NavigationMap extends Fragment implements OnMapReadyCallback, Permi
                 .getRoute(new Callback<DirectionsResponse>() {
                     @Override
                     public void onResponse(Call<DirectionsResponse> call, Response<DirectionsResponse> response) {
-// You can get the generic HTTP info about the response
+                        // You can get the generic HTTP info about the response
                         Log.d(TAG, "Response code: " + response.code());
                         if (response.body() == null) {
                             Log.e(TAG, "No routes found, make sure you set the right user and access token.");
@@ -387,7 +424,7 @@ public class NavigationMap extends Fragment implements OnMapReadyCallback, Permi
 
                         currentRoute = response.body().routes().get(0);
 
-// Draw the route on the map
+                        // Draw the route on the map
                         if (navigationMapRoute != null) {
                             navigationMapRoute.removeRoute();
                         } else {
@@ -412,8 +449,13 @@ public class NavigationMap extends Fragment implements OnMapReadyCallback, Permi
         if (PermissionsManager.areLocationPermissionsGranted(getContext())) {
 // Activate the MapboxMap LocationComponent to show user location
 // Adding in LocationComponentOptions is also an optional parameter
+            LocationComponentActivationOptions locationComponentActivationOptions = LocationComponentActivationOptions
+                    .builder(getContext(), loadedMapStyle)
+                    .useDefaultLocationEngine(true)
+                    .build();
             locationComponent = mapboxMap.getLocationComponent();
-            locationComponent.activateLocationComponent(getContext(), loadedMapStyle);
+            //locationComponent.activateLocationComponent(getContext(), loadedMapStyle, true);
+            locationComponent.activateLocationComponent(locationComponentActivationOptions);
             locationComponent.setLocationComponentEnabled(true);
 // Set the component's camera mode
             locationComponent.setCameraMode(CameraMode.TRACKING);
