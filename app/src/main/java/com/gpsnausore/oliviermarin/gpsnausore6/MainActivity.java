@@ -104,8 +104,6 @@ public class MainActivity extends AppCompatActivity implements DeviceList.OnFrag
         try {
             connected = true;
             mainThread = new ConnectedThread(mBTSocket);
-
-
         } catch (IOException e) {
             e.printStackTrace();
             Toast.makeText(getBaseContext(), "Impossible de se connecter à "+deviceName, Toast.LENGTH_SHORT).show();
@@ -247,10 +245,12 @@ public class MainActivity extends AppCompatActivity implements DeviceList.OnFrag
         // Call this method from the main activity to shut down the connection.
         public void cancel() {
             try {
+                this.write("CMD_DISCONNECT".getBytes());
                 mmSocket.close();
                 connectedDeviceText.setText(R.string.text_noConnectedDevice);
                 disconnectDeviceButton.setEnabled(false);
                 disconnectDeviceButton.setOnClickListener(null);
+                connected = false;
             } catch (IOException e) {
                 Log.e(TAG, "Could not close the connect socket", e);
             }

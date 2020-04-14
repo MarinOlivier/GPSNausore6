@@ -12,6 +12,7 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.support.annotation.NonNull;
 import android.support.design.widget.FloatingActionButton;
+import android.support.design.widget.MathUtils;
 import android.support.v4.app.Fragment;
 import android.util.Log;
 import android.view.LayoutInflater;
@@ -26,6 +27,8 @@ import com.mapbox.android.core.permissions.PermissionsListener;
 import com.mapbox.android.core.permissions.PermissionsManager;
 import com.mapbox.api.directions.v5.models.DirectionsResponse;
 import com.mapbox.api.directions.v5.models.DirectionsRoute;
+import com.mapbox.api.directions.v5.models.LegStep;
+import com.mapbox.api.directions.v5.models.StepManeuver;
 import com.mapbox.api.geocoding.v5.models.CarmenFeature;
 import com.mapbox.geojson.Feature;
 import com.mapbox.geojson.FeatureCollection;
@@ -53,7 +56,11 @@ import com.mapbox.services.android.navigation.v5.navigation.MapboxNavigation;
 import com.mapbox.services.android.navigation.v5.navigation.NavigationRoute;
 import com.mapbox.services.android.navigation.v5.offroute.OffRouteListener;
 import com.mapbox.services.android.navigation.v5.routeprogress.ProgressChangeListener;
+import com.mapbox.services.android.navigation.v5.routeprogress.RouteLegProgress;
 import com.mapbox.services.android.navigation.v5.routeprogress.RouteProgress;
+
+import org.json.JSONException;
+import org.json.JSONObject;
 
 import java.util.List;
 import java.util.Objects;
@@ -110,6 +117,8 @@ public class NavigationMap extends Fragment implements OnMapReadyCallback, Permi
     private NavigationCamera camera;
 
     private LocationManager mLocationManager;
+
+    private boolean navIsStarted = false;
 
     public NavigationMap() {
         // Required empty public constructor
@@ -302,32 +311,35 @@ public class NavigationMap extends Fragment implements OnMapReadyCallback, Permi
         });
     }
 
+    private JSONObject serializeInstruction(double distance, StepManeuver maneuver) throws JSONException {
+        int roundedDistance = (int) ((((int)distance + 4) / 5) * 5);
+        return new JSONObject("{'distance':"+roundedDistance+", " +
+                "'instruction':'"+maneuver.instruction()+"', " +
+                "'type':'"+maneuver.type()+"', " +
+                "'modifier':'"+maneuver.modifier()+"', " +
+                "'exit':'"+maneuver.exit()+"'}");
+    }
+
     private void startNavigation(DirectionsRoute route) {
         if (locationComponent != null) {
             navigation = new MapboxNavigation(getContext(), getString(R.string.access_token));
             navigation.addProgressChangeListener(new ProgressChangeListener() {
                 @Override
                 public void onProgressChange(Location location, RouteProgress routeProgress) {
-                    //Toast.makeText(MainActivity.this, "progress: " + routeProgress.distanceTraveled(), Toast.LENGTH_SHORT).show();
+                    try {
+                            Log.d("MY_DEBUG", String.valueOf(routeProgress.currentLegProgress()));
+
+                        if (((MainActivity) Objects.requireNonNull(getActivity())).isConnected()) {
+                            MainActivity.ConnectedThread mainThread = ((MainActivity)getActivity()).getMainThread();
+                            mainThread.write(serializeInstruction(routeProgress.currentLegProgress().distanceRemaining(),
+                                    routeProgress.currentLegProgress().currentStep().maneuver()).toString().getBytes());
+                        }
+                    } catch (JSONException e) {
+                        e.printStackTrace();
+                    }
 
                 }
             });
-            navigation.addMilestoneEventListener(new MilestoneEventListener() {
-                @Override
-                public void onMilestoneEvent(RouteProgress routeProgress, String instruction, Milestone milestone) {
-                    if (routeProgress.bannerInstruction() != null) {
-                        Log.d("MY_DEBUG", "instruction: " +
-                                routeProgress.bannerInstruction().getPrimary().getType() + " "
-                                + routeProgress.bannerInstruction().getPrimary().getModifier() + " "
-                                + routeProgress.bannerInstruction().getPrimary().getText() + " "
-                                + routeProgress.bannerInstruction().getRemainingStepDistance());
-                    }
-                }
-            });
-            LocationEngine locationEngine = LocationEngineProvider.getBestLocationEngine(getContext());
-            navigation.setLocationEngine(locationEngine);
-            navigationMapRoute.addProgressChangeListener(navigation);
-            navigationMapRoute.addRoute(route);
             navigation.addOffRouteListener(new OffRouteListener() {
                 @Override
                 public void userOffRoute(Location location) {
@@ -336,9 +348,14 @@ public class NavigationMap extends Fragment implements OnMapReadyCallback, Permi
                     restartNav();
                 }
             });
+            LocationEngine locationEngine = LocationEngineProvider.getBestLocationEngine(getContext());
+            navigation.setLocationEngine(locationEngine);
+            navigationMapRoute.addProgressChangeListener(navigation);
+            navigationMapRoute.addRoute(route);
             navigation.startNavigation(route);
             camera = new NavigationCamera(mapboxMap, navigation, locationComponent);
             camera.start(route);
+            navIsStarted = true;
         }
     }
 
@@ -383,7 +400,6 @@ public class NavigationMap extends Fragment implements OnMapReadyCallback, Permi
                     if (source != null) {
                         source.setGeoJson(Feature.fromGeometry(destinationPoint));
                     }
-
                     navigationMapRoute = getRoute(originPoint, destinationPoint);
                     initNavFab();
                 }
@@ -397,13 +413,7 @@ public class NavigationMap extends Fragment implements OnMapReadyCallback, Permi
     }
 
     private NavigationMapRoute getRoute(Point origin, Point destination) {
-        //@TODO : Enelver ca, c'est pour test TGV
-        //LatLng latlng = new LatLng(43.253423, 5.399954);
-        //origin = Point.fromLngLat(latlng.getLongitude(), latlng.getLatitude());
-
-
         origin = Point.fromLngLat(getLastKnownLocation().getLongitude(), getLastKnownLocation().getLatitude());
-
         NavigationRoute.builder(getContext())
                 .accessToken(Mapbox.getAccessToken())
                 .origin(origin)
@@ -434,7 +444,6 @@ public class NavigationMap extends Fragment implements OnMapReadyCallback, Permi
 
                         directionsRoute = currentRoute;
                     }
-
                     @Override
                     public void onFailure(Call<DirectionsResponse> call, Throwable throwable) {
                         Log.e(TAG, "Error: " + throwable.getMessage());
@@ -503,12 +512,22 @@ public class NavigationMap extends Fragment implements OnMapReadyCallback, Permi
         super.onPause();
         mapView.onPause();
         Timber.tag(TAG).w("On pause");
+
+        if (navIsStarted) {
+            navigation.removeProgressChangeListener(null);
+            navigation.removeOffRouteListener(null);
+        }
     }
 
     @Override
     public void onStop() {
         super.onStop();
         mapView.onStop();
+        if (navIsStarted) {
+            navigation.removeProgressChangeListener(null);
+            navigation.removeOffRouteListener(null);
+        }
+        navIsStarted = false;
     }
 
     @Override
@@ -521,7 +540,11 @@ public class NavigationMap extends Fragment implements OnMapReadyCallback, Permi
     public void onDestroy() {
         super.onDestroy();
         mapView.onDestroy();
-        navigation.stopNavigation();
+        //navigation.stopNavigation();
+        if (navIsStarted) {
+            navigation.removeProgressChangeListener(null);
+            navigation.removeOffRouteListener(null);
+        }
     }
 
     @Override
